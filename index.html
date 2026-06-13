@@ -527,6 +527,8 @@ sunGlow.scale.set(1.5,1.5,1);
 scene.add(sunGlow);
 
 /* 文字標籤 sprite */
+const LABELS = [];          // 所有文字標籤 sprite，每幀重新換算為固定螢幕大小
+let vpH = window.innerHeight; // 目前可見區像素高度（resize 時更新）
 function makeLabel(text, color, w){
   const c = document.createElement("canvas");
   const fs = 42; c.width = 512; c.height = 96;
@@ -537,6 +539,8 @@ function makeLabel(text, color, w){
   x.fillStyle = color; x.fillText(text, 256, 50);
   const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map:new THREE.CanvasTexture(c), transparent:true, depthWrite:false, depthTest:false }));
   sp.scale.set(w, w*96/512, 1);
+  sp.userData.px = w * 40;   // 目標螢幕高度(px)：每幀依距離換算成世界尺寸，維持固定大小
+  LABELS.push(sp);
   return sp;
 }
 const sunLabel = makeLabel("日（恆星）", "#ffe9b0", 1.0);
@@ -845,6 +849,19 @@ let cumDVShown = 0;
 function cumDV(t){ return M.burns.reduce((s,b) => s + (t >= b.t ? b.dv : 0), 0); }
 
 let lastReal = performance.now();
+const _lblPos = new THREE.Vector3();
+function updateLabels(){
+  const tanHalf = Math.tan(camera.fov * Math.PI/180 / 2);
+  const h = vpH || window.innerHeight;
+  for (const sp of LABELS){
+    sp.getWorldPosition(_lblPos);
+    const d = camera.position.distanceTo(_lblPos);
+    const worldPerPx = (2 * d * tanHalf) / h;   // 該距離下，1 螢幕像素對應的世界長度
+    const hy = sp.userData.px * worldPerPx;
+    sp.scale.set(hy * 512/96, hy, 1);
+  }
+}
+
 function frame(now){
   requestAnimationFrame(frame);
   const dt = Math.min(0.05, (now - lastReal)/1000); lastReal = now;
@@ -933,6 +950,7 @@ function frame(now){
   );
   camera.lookAt(cam.target);
 
+  updateLabels();
   renderer.render(scene, camera);
 }
 
@@ -940,6 +958,7 @@ function resize(){
   const vv = window.visualViewport;
   const w = vv ? Math.round(vv.width)  : innerWidth;
   const h = vv ? Math.round(vv.height) : innerHeight;
+  vpH = h;
   document.documentElement.style.setProperty("--app-h", h + "px");
   renderer.setSize(w, h, false);
   camera.aspect = w/h;
