@@ -85,19 +85,6 @@
 
 ---
 
-## 部署到 GitHub Pages
-
-1. 在 GitHub 上建立一個新的儲存庫（repository），把 `hohmann-transfer.html` 與這份 `README.md` 一起上傳到根目錄。
-2. 進入儲存庫的 **Settings → Pages**。
-3. 在 **Build and deployment** 的 **Source** 選 **Deploy from a branch**，**Branch** 選 `main`（或你的主分支）、資料夾選 `/ (root)`，按 **Save**。
-4. 稍候約一分鐘，頁面會顯示你的網站網址，格式為 `https://<你的帳號>.github.io/<儲存庫名稱>/`。
-5. 動畫的網址是在上面網址後面接上檔名，例如：
-   `https://<你的帳號>.github.io/<儲存庫名稱>/hohmann-transfer.html`
-
-> **小技巧**：若希望打開網站根網址就直接看到動畫，把 `hohmann-transfer.html` 改名為 `index.html` 即可，這樣訪客只要輸入 `https://<你的帳號>.github.io/<儲存庫名稱>/` 就能看到。
-
----
-
 ## 技術說明
 
 - **單一檔案**：所有 HTML、CSS、JavaScript 都包在 `hohmann-transfer.html` 一個檔裡，沒有任何建置（build）步驟，也不需要安裝任何東西。
