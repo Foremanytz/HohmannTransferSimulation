@@ -1,0 +1,951 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>霍曼轉移任務模擬｜Hohmann Transfer</title>
+<style>
+  :root{
+    --bg:#04060d; --panel:#0a101dd9; --panel-line:#1d2a44;
+    --ink:#dfe7f5; --ink-dim:#8593ad;
+    --p1:#f5a83c; --p2:#62d8ff; --mission:#7df0a8; --flame:#ff8a3d;
+    --mono:ui-monospace,"SF Mono","Cascadia Mono",Consolas,monospace;
+    --sans:"Noto Sans TC","PingFang TC","Microsoft JhengHei",system-ui,sans-serif;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--ink);font-family:var(--sans)}
+  #scene{position:fixed;inset:0;display:block;touch-action:none}
+  .hud{position:fixed;z-index:5;pointer-events:none}
+  .hud .card{pointer-events:auto}
+
+  /* 標題與任務時鐘 */
+  #topbar{top:0;left:0;right:0;display:flex;justify-content:space-between;align-items:flex-start;padding:12px 14px;gap:10px}
+  #brand .t1{font-size:15px;font-weight:700;letter-spacing:.12em}
+  #brand .t2{font-size:11px;color:var(--ink-dim);letter-spacing:.28em;font-family:var(--mono)}
+  #clockcard{background:var(--panel);border:1px solid var(--panel-line);border-radius:10px;padding:8px 12px;font-family:var(--mono);font-size:12px;line-height:1.7;min-width:208px;backdrop-filter:blur(6px)}
+  #clockcard b{color:var(--mission);font-weight:600}
+  #clockcard .row{display:flex;justify-content:space-between;gap:14px}
+  #clockcard .lbl{color:var(--ink-dim)}
+
+  /* 控制列 */
+  #controls{top:64px;right:14px;display:flex;flex-direction:column;gap:8px;align-items:flex-end}
+  .card{background:var(--panel);border:1px solid var(--panel-line);border-radius:10px;padding:8px 10px;backdrop-filter:blur(6px)}
+  .btnrow{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+  button{font-family:var(--sans);font-size:12px;color:var(--ink);background:#16203a;border:1px solid #2a3a60;border-radius:7px;padding:6px 10px;cursor:pointer}
+  button:hover{background:#1d2b4e}
+  button:focus-visible{outline:2px solid var(--mission);outline-offset:1px}
+  button.on{background:#1f3b2f;border-color:var(--mission);color:var(--mission)}
+  #warpcard{display:flex;flex-direction:column;gap:5px;min-width:226px}
+  #warpcard .row{display:flex;align-items:center;gap:8px;font-size:11px}
+  #warpcard input[type=range]{flex:1;accent-color:var(--mission)}
+  #warpread{font-family:var(--mono);color:var(--mission);font-size:11px;min-width:88px;text-align:right}
+  label.chk{display:flex;align-items:center;gap:5px;font-size:11px;color:var(--ink-dim);cursor:pointer}
+
+  /* 左側任務序列軌（signature） */
+  #rail{left:14px;top:64px;bottom:120px;display:flex;align-items:center}
+  #railin{max-height:100%;overflow-y:auto;background:var(--panel);border:1px solid var(--panel-line);border-radius:10px;padding:10px 10px;backdrop-filter:blur(6px);scrollbar-width:thin}
+  .stop{display:flex;align-items:center;gap:8px;padding:4px 2px;cursor:pointer;border:none;background:none;width:100%;text-align:left}
+  .stop .dot{width:10px;height:10px;border-radius:50%;border:2px solid #44506e;background:transparent;flex:0 0 auto;position:relative}
+  .stop .dot::after{content:"";position:absolute;left:3px;top:12px;width:2px;height:12px;background:#2a3550}
+  .stop:last-child .dot::after{display:none}
+  .stop .lab{font-size:11px;color:var(--ink-dim);letter-spacing:.04em;white-space:nowrap}
+  .stop.burnstop .dot{border-color:var(--flame)}
+  .stop.cur .dot{background:var(--mission);border-color:var(--mission);box-shadow:0 0 8px var(--mission)}
+  .stop.cur .lab{color:var(--ink);font-weight:700}
+  .stop.past .dot{background:#44506e}
+
+  /* 底部字幕列 */
+  #subbar{left:0;right:0;bottom:0;padding:10px 14px 14px;display:flex;justify-content:center}
+  body.subhide #subbar{display:none}
+  #subcard{max-width:1060px;width:100%;background:var(--panel);border:1px solid var(--panel-line);border-radius:16px;padding:16px 24px 18px;backdrop-filter:blur(8px)}
+  #ph-kicker{font-family:var(--mono);font-size:14px;letter-spacing:.3em;color:var(--mission);margin-bottom:4px}
+  #ph-title{font-size:27px;font-weight:800;letter-spacing:.03em}
+  #ph-desc{margin-top:7px;font-size:19px;line-height:1.6;color:#b9c4da}
+  #ph-desc b{color:var(--ink)}
+  #ph-prog{margin-top:9px;height:3px;border-radius:2px;background:#1a2542;overflow:hidden}
+  #ph-prog i{display:block;height:100%;width:0%;background:var(--mission)}
+  .burning #ph-kicker{color:var(--flame)}
+  .burning #ph-prog i{background:var(--flame)}
+
+  /* 年曆：凸顯任務時間流逝 */
+  #yearrow{display:flex;align-items:center;gap:9px;padding-top:2px;border-top:1px solid #1a2542;margin-top:3px}
+  #calicon{font-size:21px;line-height:1;display:inline-block;filter:drop-shadow(0 0 4px #0008)}
+  #calicon.tick{animation:calflip .4s ease}
+  @keyframes calflip{0%{transform:rotateX(0) scale(1)}45%{transform:rotateX(86deg) scale(1.3)}100%{transform:rotateX(0) scale(1)}}
+  #yearwrap{flex:1;display:flex;flex-direction:column;gap:3px}
+  #yearnum{font-family:var(--mono);font-size:13px;color:var(--ink)}
+  #yearnum b{color:var(--p1);font-weight:700}
+  #yearbar{height:3px;border-radius:2px;background:#1a2542;overflow:hidden}
+  #yearbar i{display:block;height:100%;width:0%;background:var(--p1)}
+  @media (prefers-reduced-motion: reduce){ #calicon.tick{animation:none} }
+
+  /* 模型假設 */
+  #notes{position:fixed;z-index:9;inset:0;display:none;align-items:center;justify-content:center;background:#020409aa}
+  #notes.open{display:flex}
+  #notesin{max-width:560px;width:calc(100% - 40px);max-height:80vh;overflow:auto;background:#0b1322;border:1px solid var(--panel-line);border-radius:14px;padding:20px 22px}
+  #notesin h2{font-size:15px;margin-bottom:10px;letter-spacing:.08em}
+  #notesin li{font-size:12.5px;line-height:1.8;color:#b9c4da;margin-left:18px}
+  #notesin .close{margin-top:14px}
+
+  @media (max-width:760px){
+    #rail{left:8px;top:auto;bottom:170px;right:8px;align-items:flex-end}
+    #railin{display:flex;gap:2px;overflow-x:auto;max-width:100%;padding:6px 8px}
+    .stop{flex-direction:column;gap:3px;padding:2px 5px}
+    .stop .dot::after{display:none}
+    .stop .lab{font-size:9.5px}
+    #ph-title{font-size:21px}
+    #ph-desc{font-size:16px}
+    body.subhide #rail{bottom:8px}
+    #controls{top:56px}
+    #clockcard{min-width:0;font-size:10.5px}
+    #brand .t1{font-size:13px}
+  }
+  @media (prefers-reduced-motion: reduce){ #ph-prog i{transition:none} }
+</style>
+</head>
+<body>
+<canvas id="scene"></canvas>
+
+<div class="hud" id="topbar">
+  <div id="brand" class="card" style="background:transparent;border:none;padding:2px 0">
+    <div class="t1">霍曼轉移任務模擬</div>
+    <div class="t2">HOHMANN&nbsp;TRANSFER</div>
+  </div>
+  <div id="clockcard" class="card">
+    <div class="row"><span class="lbl">任務時間</span><b id="hud-t">T+0.00 年</b></div>
+    <div class="row"><span class="lbl">對日距離</span><span id="hud-r">— AU</span></div>
+    <div class="row"><span class="lbl">對日速度</span><span id="hud-v">— km/s</span></div>
+    <div class="row"><span class="lbl">累計 ΔV</span><span id="hud-dv">0.0 km/s</span></div>
+  </div>
+</div>
+
+<div class="hud" id="controls">
+  <div class="card btnrow">
+    <button id="b-play">⏸ 暫停</button>
+    <button id="b-prev" title="上一階段">◀ 階段</button>
+    <button id="b-next" title="下一階段">階段 ▶</button>
+    <button id="b-replay">↻ 重播</button>
+    <button id="b-sub" class="on" title="顯示／隱藏底部字幕">🗨 字幕</button>
+    <button id="b-notes">ⓘ 模型假設</button>
+  </div>
+  <div class="card btnrow">
+    <button id="v-top">俯視</button>
+    <button id="v-iso" class="on">斜視</button>
+    <button id="v-ship">跟隨太空船</button>
+  </div>
+  <div class="card" id="warpcard">
+    <div class="row">
+      <span style="color:var(--ink-dim)">時間倍率</span>
+      <span id="warpread">—</span>
+      <label class="chk"><input type="checkbox" id="warpauto" checked>自動</label>
+    </div>
+    <div class="row"><input type="range" id="warpslider" min="-2" max="1.6" step="0.01" value="0" aria-label="時間倍率"></div>
+    <div class="row"><label class="chk"><input type="checkbox" id="camauto" checked>自動運鏡（脫離／捕獲時拉近行星）</label></div>
+    <div id="yearrow">
+      <span id="calicon" aria-hidden="true">📅</span>
+      <div id="yearwrap">
+        <span id="yearnum">任務第 <b>1</b> 年</span>
+        <div id="yearbar"><i></i></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="hud" id="rail"><div id="railin" class="card" role="tablist" aria-label="任務序列"></div></div>
+
+<div class="hud" id="subbar">
+  <div id="subcard">
+    <div id="ph-kicker">MISSION PHASE</div>
+    <div id="ph-title">初始化…</div>
+    <div id="ph-desc"></div>
+    <div id="ph-prog"><i></i></div>
+  </div>
+</div>
+
+<div id="notes" role="dialog" aria-modal="true" aria-label="模型假設">
+  <div id="notesin">
+    <h2>模型假設與簡化（教學用）</h2>
+    <ul>
+      <li>採二體克卜勒模型 + patched-conic 簡化：太空船在引力圈外只受恆星（日）引力。</li>
+      <li>畫面中的「衛星軌道」（繞行星部分）半徑為示意放大，未按 AU 比例；脫離／捕獲所需的行星引力圈內 ΔV 未列入帳面（僅計日心 ΔV）。</li>
+      <li>油料不計損耗、不影響質量；各燃燒以脈衝近似計算 ΔV，但依 TWR = 2（以地表重力 g₀ 為基準，加速度 ≈ 19.6 m/s²）換算真實燃燒時間並顯示；動畫中的燃燒時長為視覺放大。</li>
+      <li>行星一軌道：半長軸 a=1.5 AU、半短軸 b=1.0 AU（離心率 e≈0.745，PE≈0.382 AU、AP≈2.618 AU）。行星二軌道：a=2.5 AU、b=2.0 AU（e=0.6，PE=1.0 AU、AP=4.0 AU）。</li>
+      <li>兩軌道面夾角 20°；兩 PE 方向（3D）夾角 37°；軌道面交點線與行星一 PE 方向夾 90°（題目未指定，採此預設）。</li>
+      <li>轉移窗口為真實求解：以數值方法尋找「太空船沿轉移橢圓飛行半圈後，行星恰好同時抵達交會點」的注入時刻。</li>
+      <li>行星質量、攝動、光壓等效應忽略；行星初始相位為任意設定值。</li>
+    </ul>
+    <button class="close" id="b-notes-close">關閉</button>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+"use strict";
+/* =====================================================================
+   PART A — MISSION CORE（純數學，無 three.js 依賴；可獨立驗證）
+   單位：長度 AU、時間 年、角度 弧度。mu = 4*pi^2（日心）。
+   世界座標：z 朝上；行星一軌道面 = XY 平面；交點線 = Y 軸。
+   ===================================================================== */
+// ===== MISSION CORE BEGIN =====
+const MU = 4 * Math.PI * Math.PI;
+const TAU = 2 * Math.PI;
+const D2R = Math.PI / 180;
+const AUYR_KMS = 4.740470;           // 1 AU/yr = 4.74047 km/s
+const G0_KMS_PER_MIN = 9.80665e-3 * 60; // g0 (km/s per minute)
+
+function wrap2pi(a){ a %= TAU; return a < 0 ? a + TAU : a; }
+function wrapPi(a){ a = wrap2pi(a); return a > Math.PI ? a - TAU : a; }
+
+/* 橢圓日心軌道：a 半長軸, e 離心率, inc 對 Y 軸（交點線）之傾角,
+   om 近日點方向之面內角, tp 過近日點時刻。
+   面內 (x,y) → 世界 (x*cos i, y, -x*sin i)。 */
+class Orbit {
+  constructor(a, e, inc, om, tp){
+    this.a=a; this.e=e; this.inc=inc; this.om=om; this.tp=tp;
+    this.T = Math.pow(a, 1.5);
+    this.n = TAU / this.T;
+    this.ci = Math.cos(inc); this.si = Math.sin(inc);
+  }
+  toWorld(x, y){ return [x*this.ci, y, -x*this.si]; }
+  anomalies(t){
+    let M = wrapPi(this.n * (t - this.tp));
+    let E = (this.e < 0.8) ? M : Math.PI * Math.sign(M || 1);
+    for (let k=0; k<24; k++){
+      const f = E - this.e*Math.sin(E) - M;
+      const d = 1 - this.e*Math.cos(E);
+      E -= f/d;
+      if (Math.abs(f) < 1e-13) break;
+    }
+    const nu = Math.atan2(Math.sqrt(1-this.e*this.e)*Math.sin(E), Math.cos(E)-this.e);
+    const r  = this.a * (1 - this.e*Math.cos(E));
+    return { nu, r };
+  }
+  theta(t){ const {nu} = this.anomalies(t); return wrap2pi(this.om + nu); } // 面內角
+  pos(t){
+    const {nu, r} = this.anomalies(t);
+    const th = this.om + nu;
+    return this.toWorld(r*Math.cos(th), r*Math.sin(th));
+  }
+  vel(t){ // 數值微分（穩健、足夠精準）
+    const h = 1e-6;
+    const p1 = this.pos(t-h), p2 = this.pos(t+h);
+    return [(p2[0]-p1[0])/(2*h), (p2[1]-p1[1])/(2*h), (p2[2]-p1[2])/(2*h)];
+  }
+  radiusAtTheta(th){ // 面內角 th 處的軌道半徑
+    const nu = th - this.om;
+    const p = this.a * (1 - this.e*this.e);
+    return p / (1 + this.e*Math.cos(nu));
+  }
+}
+function vsub(a,b){ return [a[0]-b[0], a[1]-b[1], a[2]-b[2]]; }
+function vlen(a){ return Math.hypot(a[0],a[1],a[2]); }
+
+/* 注入窗口求解：太空船在停泊圓軌道 park 上，於時刻 ti 注入轉移橢圓，
+   半圈（TOF）後抵達 出發角+180°；要求目標行星屆時恰在該角。
+   dir=+1 外行（目標較遠）、dir=-1 內行（目標較近）。 */
+function solveInjection(park, target, rDep, tMin, tMax, dir){
+  const margin = 0.12;
+  function evalG(ti){
+    const phiD = park.theta(ti);
+    const phiA = wrap2pi(phiD + Math.PI);
+    const rArr = target.radiusAtTheta(phiA);
+    if (dir > 0 && rArr < rDep + margin) return null;
+    if (dir < 0 && rArr > rDep - margin) return null;
+    const at  = (rDep + rArr) / 2;
+    const tof = Math.pow(at, 1.5) / 2;
+    const g = wrapPi(target.theta(ti + tof) - phiA);
+    return { g, phiD, phiA, rArr, at, tof };
+  }
+  const step = 0.004, sols = [];
+  let prev = null, prevT = 0;
+  for (let ti = tMin; ti <= tMax; ti += step){
+    const cur = evalG(ti);
+    if (cur && prev && prev.g * cur.g <= 0 && Math.abs(cur.g - prev.g) < Math.PI){
+      let lo = prevT, hi = ti, glo = prev.g;
+      for (let k=0; k<70; k++){
+        const mid = (lo+hi)/2, em = evalG(mid);
+        if (!em) break;
+        if (glo * em.g <= 0) hi = mid; else { lo = mid; glo = em.g; }
+      }
+      const ti2 = (lo+hi)/2, fin = evalG(ti2);
+      if (fin) sols.push({ tInj: ti2, ...fin, tArr: ti2 + fin.tof, exact:true });
+    }
+    prev = cur; prevT = ti;
+  }
+  if (sols.length) return sols;
+  // 後備：取 |g| 最小的合法點（理論上不會走到這裡；保險用）
+  let best=null, bestT=0;
+  for (let ti = tMin; ti <= tMax; ti += step){
+    const cur = evalG(ti);
+    if (cur && (!best || Math.abs(cur.g) < Math.abs(best.g))){ best=cur; bestT=ti; }
+  }
+  if (best) return [{ tInj: bestT, ...best, tArr: bestT + best.tof, exact:false }];
+  return [];
+}
+
+/* 求解整段任務時間軸 */
+function solveMission(){
+  const incP = 20 * D2R;
+  // 行星二 PE 面內角：使 3D 上兩 PE 方向夾 37°
+  const alpha2 = Math.acos(Math.cos(37*D2R) / Math.cos(incP));
+  const T1 = Math.pow(1.5, 1.5);
+  const e1 = Math.sqrt(1 - (1.0/1.5)**2);   // ≈0.7454
+  const tDep0 = 0.35;                        // 行星一首次抵達 AP 的時刻（由 tp 反推）
+  const planet1 = new Orbit(1.5, e1,  0,     0,      tDep0 - T1/2);
+  const planet2 = new Orbit(2.5, 0.6, incP,  alpha2, -1.30);
+
+  const r1c = planet1.a * (1 + planet1.e);   // ≈2.618：行星一 AP 距離
+  const r2c = planet2.a * (1 + planet2.e);   // =4.0  ：行星二 AP 距離
+
+  // 在所有可行窗口中，挑「注入＋捕獲」總 ΔV 最小者（真實窗口 + 省能選擇）
+  function pickBest(sols, park, target, rDep, inc, inward){
+    let best = null;
+    for (const s of sols){
+      const e  = Math.abs(rDep - s.rArr) / (rDep + s.rArr);
+      const tr = inward ? new Orbit(s.at, e, inc, s.phiA, s.tArr)
+                        : new Orbit(s.at, e, inc, s.phiD, s.tInj);
+      const dvI = vlen(vsub(tr.vel(s.tInj), park.vel(s.tInj)));
+      const dvC = vlen(vsub(target.vel(s.tArr), tr.vel(s.tArr)));
+      const cost = dvI + dvC;
+      if (!best || cost < best.cost) best = { ...s, trans: tr, cost, nSols: sols.length };
+    }
+    return best;
+  }
+
+  // —— 去程 ——
+  const tDep = tDep0;                                       // 機動0：脫離+圓化（行星一在 AP）
+  const park1a = new Orbit(r1c, 0, 0, Math.PI, tDep);       // 圓軌道，θ=180° 起
+  const tPC1 = tDep + park1a.T / 4;                         // 滑行 90° 至交點線（θ=270°）
+  const park1b = new Orbit(r1c, 0, incP, 1.5*Math.PI, tPC1);// 機動1：面變換後（行星二軌道面）
+  const inj1 = pickBest(
+    solveInjection(park1b, planet2, r1c, tPC1 + 0.05, tPC1 + 6*park1b.T, +1),
+    park1b, planet2, r1c, incP, false);
+  const trans1 = inj1.trans;
+
+  // —— 返程 ——
+  const thAP2 = wrap2pi(planet2.om + Math.PI);
+  const kAP = Math.ceil((inj1.tArr + 0.40 - planet2.tp - planet2.T/2) / planet2.T);
+  const tDep2 = planet2.tp + planet2.T/2 + kAP * planet2.T; // 機動4：行星二在 AP
+  const park2a = new Orbit(r2c, 0, incP, thAP2, tDep2);
+  const dthNode = wrap2pi(1.5*Math.PI - thAP2);
+  const tPC2 = tDep2 + dthNode / park2a.n;                  // 滑行至交點線（θ=270°）
+  const park2b = new Orbit(r2c, 0, 0, 1.5*Math.PI, tPC2);   // 機動5：回到行星一軌道面
+  const inj2 = pickBest(
+    solveInjection(park2b, planet1, r2c, tPC2 + 0.05, tPC2 + 4*park2b.T, -1),
+    park2b, planet1, r2c, 0, true);
+  const trans2 = inj2.trans;
+
+  // —— 各燃燒 ΔV（日心向量差）——
+  function dvOf(before, after, t){ return vlen(vsub(after.vel(t), before.vel(t))) * AUYR_KMS; }
+  const burns = [
+    { id:0, t:tDep,      dv: dvOf(planet1, park1a, tDep) },
+    { id:1, t:tPC1,      dv: dvOf(park1a,  park1b, tPC1) },
+    { id:2, t:inj1.tInj, dv: dvOf(park1b,  trans1, inj1.tInj) },
+    { id:3, t:inj1.tArr, dv: dvOf(trans1,  planet2, inj1.tArr) },
+    { id:4, t:tDep2,     dv: dvOf(planet2, park2a, tDep2) },
+    { id:5, t:tPC2,      dv: dvOf(park2a,  park2b, tPC2) },
+    { id:6, t:inj2.tInj, dv: dvOf(park2b,  trans2, inj2.tInj) },
+    { id:7, t:inj2.tArr, dv: dvOf(trans2,  planet1, inj2.tArr) },
+  ];
+  burns.forEach(b => b.min = b.dv / (2 * G0_KMS_PER_MIN)); // TWR=2 實際燃燒分鐘數
+
+  return { planet1, planet2, incP, alpha2, r1c, r2c,
+           tDep, park1a, tPC1, park1b, inj1, trans1,
+           tDep2, park2a, tPC2, park2b, inj2, trans2, burns };
+}
+// ===== MISSION CORE END =====
+
+/* =====================================================================
+   PART B — 任務階段（字幕／時間倍率／運鏡腳本）
+   ===================================================================== */
+const M = solveMission();
+const f1 = x => x.toFixed(1), f2 = x => x.toFixed(2);
+const DV = i => `ΔV ≈ <b>${f1(M.burns[i].dv)} km/s</b>（TWR=2 實際燃燒約 ${f1(M.burns[i].min)} 分鐘，動畫已放大）`;
+
+const ESC = 0.10;   // 脫離／捕獲過場時長（年）
+const BW  = 0.045;  // 燃燒視覺視窗半寬（年）
+const moonR1 = 0.13, moonR2 = 0.17, moonT = 0.35; // 衛星軌道（示意）
+
+const tEnd = M.inj2.tArr + 2.2;
+const PH = []; // {id,t0,t1,kind,title,desc,warp,focus,rail}
+function ph(o){ PH.push(o); }
+
+ph({ id:"wait1", t0:0, t1:M.tDep-ESC, kind:"moon1", rail:"停泊 P1", warp:0.55, focus:"p1",
+  title:"停泊：行星一衛星軌道",
+  desc:`等待<b>行星一接近其遠日點（AP）</b>。選在 AP 脫離，是因為下一步的圓化燃燒可直接把對日軌道半徑定在 AP 距離 <b>${f2(M.r1c)} AU</b>，銜接最乾淨。（衛星軌道為示意放大）` });
+ph({ id:"esc1", t0:M.tDep-ESC, t1:M.tDep, kind:"esc1", rail:null, warp:0.05, focus:"p1",
+  title:"機動 0｜脫離行星一引力圈",
+  desc:"行星一已抵達 AP。太空船爬升脫離行星一引力圈，改以恆星（日）為中心運動。" });
+ph({ id:"burn0", t0:M.tDep, t1:M.tDep+BW, kind:"burn", burn:0, before:"PLANET1RIDE", after:"park1a", rail:"機動 0", warp:0.018, focus:"p1",
+  title:"機動 0｜提升對日 PE（圓化）",
+  desc:`順向加速，把對日近日點（PE）從 0.38 AU 一路抬升到與目前距離相同——軌道<b>圓化於 r = ${f2(M.r1c)} AU</b>，徹底脫離行星一的橢圓。${DV(0)}` });
+ph({ id:"coastN1", t0:M.tDep+BW, t1:M.tPC1-BW, kind:"orb", orb:"park1a", rail:null, warp:0.30, focus:"sun",
+  title:"滑行：前往兩軌道面交點線",
+  desc:"目前仍在<b>行星一軌道面</b>上繞日。平面變換只能在兩軌道面的<b>交點線</b>上執行——只有在交線上，新舊軌道才共享同一個位置點。" });
+ph({ id:"burn1", t0:M.tPC1-BW, t1:M.tPC1+BW, kind:"burn", burn:1, before:"park1a", after:"park1b", rail:"機動 1", warp:0.018, focus:"ship",
+  title:"機動 1｜軌道面變換 20°",
+  desc:`抵達交點線。側向燃燒把速度向量旋轉 20°，從行星一軌道面改為<b>行星二軌道面</b>繞日。平面變換代價：ΔV = 2·v·sin(10°)。${DV(1)}` });
+ph({ id:"coastW1", t0:M.tPC1+BW, t1:M.inj1.tInj-BW, kind:"orb", orb:"park1b", rail:null, warp:0.85, focus:"sun",
+  title:"滑行：等待 Hohmann 轉移窗口",
+  desc:`霍曼轉移要求<b>相位對齊</b>：太空船沿轉移橢圓飛行半圈（約 ${f2(M.inj1.tof)} 年）後，行星二必須恰好同時抵達交會點（綠色標記）。在停泊軌道上繞行等待正確的注入時刻——本次需等約 <b>${f1(M.inj1.tInj - M.tPC1)} 年</b>。` });
+ph({ id:"burn2", t0:M.inj1.tInj-BW, t1:M.inj1.tInj+BW, kind:"burn", burn:2, before:"park1b", after:"trans1", rail:"機動 2", warp:0.018, focus:"ship",
+  title:"機動 2｜Hohmann 轉移注入",
+  desc:`順向加速，把對日遠日點（AP）抬升到行星二軌道上的交會點（r ≈ ${f2(M.inj1.rArr)} AU）。轉移橢圓：<b>PE＝出發點、AP＝交會點</b>。${DV(2)}` });
+ph({ id:"trans1", t0:M.inj1.tInj+BW, t1:M.inj1.tArr-BW, kind:"orb", orb:"trans1", rail:"轉移 →", warp:0.42, focus:"sun",
+  title:"Hohmann 轉移中（去程）",
+  desc:`沿轉移橢圓<b>無動力滑行半圈</b>，全程僅靠恆星重力。飛行時間 ≈ <b>${f2(M.inj1.tof)} 年</b>。太空船爬升時逐漸減速，行星二正朝交會點趕來。` });
+ph({ id:"burn3", t0:M.inj1.tArr-BW, t1:M.inj1.tArr+BW, kind:"burn", burn:3, before:"trans1", after:"PLANET2RIDE", rail:"機動 3", warp:0.018, focus:"p2",
+  title:"機動 3｜減速捕獲",
+  desc:`抵達轉移橢圓 AP，與行星二交會。逆向燃燒抵銷速度差，被行星二引力捕獲，進入其衛星軌道。${DV(3)}` });
+ph({ id:"stay2", t0:M.inj1.tArr+BW, t1:M.tDep2-ESC, kind:"moon2", rail:"停泊 P2", warp:0.75, focus:"p2",
+  title:"停泊：行星二衛星軌道",
+  desc:`任務目標達成，停留並等待<b>返程窗口</b>：與去程同理，等行星二接近其 AP（r = ${f2(M.r2c)} AU）時脫離，重複機動 0–2 的流程返回行星一。` });
+ph({ id:"esc2", t0:M.tDep2-ESC, t1:M.tDep2, kind:"esc2", rail:null, warp:0.05, focus:"p2",
+  title:"機動 4｜脫離行星二引力圈",
+  desc:"行星二已抵達 AP。太空船脫離行星二引力圈，回到繞日運動。" });
+ph({ id:"burn4", t0:M.tDep2, t1:M.tDep2+BW, kind:"burn", burn:4, before:"PLANET2RIDE", after:"park2a", rail:"機動 4", warp:0.018, focus:"p2",
+  title:"機動 4｜提升對日 PE（圓化於 4.0 AU）",
+  desc:`與去程的機動 0 相同邏輯：順向加速把對日 PE 從 1.0 AU 抬到 4.0 AU，<b>圓化於行星二的 AP 距離</b>。${DV(4)}` });
+ph({ id:"coastN2", t0:M.tDep2+BW, t1:M.tPC2-BW, kind:"orb", orb:"park2a", rail:null, warp:0.42, focus:"sun",
+  title:"滑行：前往軌道面交點線",
+  desc:"沿圓化後的停泊軌道滑行，前往兩軌道面的交點線，準備把軌道面換回<b>行星一軌道面</b>。" });
+ph({ id:"burn5", t0:M.tPC2-BW, t1:M.tPC2+BW, kind:"burn", burn:5, before:"park2a", after:"park2b", rail:"機動 5", warp:0.018, focus:"ship",
+  title:"機動 5｜軌道面變換 20°（返回行星一軌道面）",
+  desc:`在交點線上把速度向量反向旋轉 20°，回到行星一軌道面。${DV(5)}` });
+ph({ id:"coastW2", t0:M.tPC2+BW, t1:M.inj2.tInj-BW, kind:"orb", orb:"park2b", rail:null, warp:1.0, focus:"sun",
+  title:"滑行：等待返程轉移窗口",
+  desc:`等待相位對齊：沿內行轉移橢圓飛行半圈（約 ${f2(M.inj2.tof)} 年）後，<b>行星一</b>必須恰好抵達交會點（綠色標記）。模擬器在所有窗口中選了<b>總 ΔV 最省</b>的一個——交會點恰為行星一的近日點（PE），轉移橢圓兩端都貼齊圓／橢圓切點，但需耐心等約 <b>${f1(M.inj2.tInj - M.tPC2)} 年</b>。錯過窗口的代價，就是時間。` });
+ph({ id:"burn6", t0:M.inj2.tInj-BW, t1:M.inj2.tInj+BW, kind:"burn", burn:6, before:"park2b", after:"trans2", rail:"機動 6", warp:0.018, focus:"ship",
+  title:"機動 6｜反向 Hohmann 注入（降低對日 PE）",
+  desc:`這次是<b>逆向減速</b>：把對日 PE 降到行星一軌道上的交會點（r ≈ ${f2(M.inj2.rArr)} AU）。轉移橢圓：<b>AP＝出發點、PE＝交會點</b>。${DV(6)}` });
+ph({ id:"trans2", t0:M.inj2.tInj+BW, t1:M.inj2.tArr-BW, kind:"orb", orb:"trans2", rail:"← 轉移", warp:0.42, focus:"sun",
+  title:"Hohmann 轉移中（回程）",
+  desc:`沿內行轉移橢圓無動力下落半圈，飛行時間 ≈ <b>${f2(M.inj2.tof)} 年</b>。愈接近恆星速度愈快。` });
+ph({ id:"burn7", t0:M.inj2.tArr-BW, t1:M.inj2.tArr+BW, kind:"burn", burn:7, before:"trans2", after:"PLANET1RIDE", rail:"機動 7", warp:0.018, focus:"p1",
+  title:"機動 7｜減速捕獲，返抵行星一",
+  desc:`與行星一交會，抵銷速度差後被其引力捕獲，重新進入行星一衛星軌道。${DV(7)}` });
+ph({ id:"done", t0:M.inj2.tArr+BW, t1:tEnd, kind:"moon1", rail:"完成", warp:0.4, focus:"p1",
+  title:"任務完成：一往一返",
+  desc:`全程 8 段機動、總 ΔV ≈ <b>${f1(M.burns.reduce((s,b)=>s+b.dv,0))} km/s</b>、任務時長 ≈ <b>${f1(M.inj2.tArr)} 年</b>。按「↻ 重播」可重看，或點左側任一節點跳轉複習。<br><b>此動畫以最容易理解的方式規劃機動程序，並非以最低燃料損耗設計。請想想有沒有更好的方式。</b>` });
+
+function phaseAt(t){
+  for (let i=PH.length-1; i>=0; i--) if (t >= PH[i].t0) return PH[i];
+  return PH[0];
+}
+
+/* =====================================================================
+   PART C — 太空船位置（分段函式）
+   ===================================================================== */
+const ORBS = { park1a:M.park1a, park1b:M.park1b, trans1:M.trans1,
+               park2a:M.park2a, park2b:M.park2b, trans2:M.trans2 };
+function moonOffset(t, rM){
+  const a = TAU * t / moonT;
+  return [ rM*Math.cos(a), rM*Math.sin(a)*0.82, rM*Math.sin(a)*0.38 ];
+}
+function addv(a,b){ return [a[0]+b[0], a[1]+b[1], a[2]+b[2]]; }
+function scalev(a,s){ return [a[0]*s, a[1]*s, a[2]*s]; }
+function smooth(u){ u=Math.min(1,Math.max(0,u)); return u*u*(3-2*u); }
+
+function ridePos(name, t){ // 燃燒前後的位置來源
+  if (name === "PLANET1RIDE") return M.planet1.pos(t);
+  if (name === "PLANET2RIDE") return M.planet2.pos(t);
+  return ORBS[name].pos(t);
+}
+function shipPos(t){
+  const p = phaseAt(t);
+  switch (p.kind){
+    case "moon1": {
+      let s = 1;
+      if (p.id === "done") s = smooth((t - p.t0) / 0.12);            // 捕獲後展開
+      return addv(M.planet1.pos(t), scalev(moonOffset(t, moonR1), s));
+    }
+    case "moon2": {
+      const s = smooth((t - p.t0) / 0.12);
+      return addv(M.planet2.pos(t), scalev(moonOffset(t, moonR2), s));
+    }
+    case "esc1": case "esc2": {
+      const pl = (p.kind === "esc1") ? M.planet1 : M.planet2;
+      const rM = (p.kind === "esc1") ? moonR1 : moonR2;
+      const u = (t - p.t0) / (p.t1 - p.t0);
+      const grow = 1 + 1.8*u*u;
+      const fade = 1 - smooth((u - 0.55) / 0.45);
+      return addv(pl.pos(t), scalev(moonOffset(t, rM), grow * fade));
+    }
+    case "burn": {
+      const tB = M.burns[p.burn].t;
+      return (t < tB) ? ridePos(p.before, t) : ridePos(p.after, t);
+    }
+    default: return ORBS[p.orb].pos(t);
+  }
+}
+function shipVelKms(t){
+  const h = 2e-4;
+  const a = shipPos(t-h), b = shipPos(t+h);
+  return vlen(vsub(b,a)) / (2*h) * AUYR_KMS;
+}
+
+/* =====================================================================
+   PART D — three.js 場景
+   ===================================================================== */
+const canvas = document.getElementById("scene");
+const renderer = new THREE.WebGLRenderer({ canvas, antialias:true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x04060d);
+const camera = new THREE.PerspectiveCamera(48, 1, 0.01, 200);
+camera.up.set(0,0,1);
+
+function V(p){ return new THREE.Vector3(p[0], p[1], p[2]); }
+
+/* 星空 */
+(function stars(){
+  const N = 1200, pos = new Float32Array(N*3);
+  for (let i=0;i<N;i++){
+    const r = 60 + Math.random()*70, th = Math.random()*TAU, ph2 = Math.acos(2*Math.random()-1);
+    pos[3*i]   = r*Math.sin(ph2)*Math.cos(th);
+    pos[3*i+1] = r*Math.sin(ph2)*Math.sin(th);
+    pos[3*i+2] = r*Math.cos(ph2);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute("position", new THREE.BufferAttribute(pos,3));
+  scene.add(new THREE.Points(g, new THREE.PointsMaterial({ color:0x9fb3d8, size:0.06, sizeAttenuation:true, transparent:true, opacity:0.8 })));
+})();
+
+/* 恆星（日） */
+const sun = new THREE.Mesh(new THREE.SphereGeometry(0.16, 24, 24), new THREE.MeshBasicMaterial({ color:0xffe9b0 }));
+scene.add(sun);
+function glowTexture(inner, outer){
+  const c = document.createElement("canvas"); c.width = c.height = 128;
+  const x = c.getContext("2d");
+  const g = x.createRadialGradient(64,64,4, 64,64,62);
+  g.addColorStop(0, inner); g.addColorStop(1, outer);
+  x.fillStyle = g; x.fillRect(0,0,128,128);
+  return new THREE.CanvasTexture(c);
+}
+const sunGlow = new THREE.Sprite(new THREE.SpriteMaterial({ map:glowTexture("rgba(255,225,150,0.95)","rgba(255,200,90,0)"), transparent:true, depthWrite:false }));
+sunGlow.scale.set(1.5,1.5,1);
+scene.add(sunGlow);
+
+/* 文字標籤 sprite */
+function makeLabel(text, color, w){
+  const c = document.createElement("canvas");
+  const fs = 42; c.width = 512; c.height = 96;
+  const x = c.getContext("2d");
+  x.font = `700 ${fs}px "Noto Sans TC","PingFang TC","Microsoft JhengHei",sans-serif`;
+  x.textAlign = "center"; x.textBaseline = "middle";
+  x.shadowColor = "rgba(0,0,0,0.9)"; x.shadowBlur = 8;
+  x.fillStyle = color; x.fillText(text, 256, 50);
+  const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map:new THREE.CanvasTexture(c), transparent:true, depthWrite:false, depthTest:false }));
+  sp.scale.set(w, w*96/512, 1);
+  return sp;
+}
+const sunLabel = makeLabel("日（恆星）", "#ffe9b0", 1.0);
+sunLabel.position.set(0, 0, 0.42); scene.add(sunLabel);
+
+/* 軌道曲線工具 */
+function orbitPoints(orb, nuFrom, nuTo, n){
+  const pts = [];
+  const p = orb.a * (1 - orb.e*orb.e);
+  for (let i=0; i<=n; i++){
+    const nu = nuFrom + (nuTo - nuFrom) * i / n;
+    const r = p / (1 + orb.e*Math.cos(nu));
+    const th = orb.om + nu;
+    pts.push(V(orb.toWorld(r*Math.cos(th), r*Math.sin(th))));
+  }
+  return pts;
+}
+function lineOf(pts, color, opacity, dashed){
+  const g = new THREE.BufferGeometry().setFromPoints(pts);
+  let mat;
+  if (dashed) mat = new THREE.LineDashedMaterial({ color, transparent:true, opacity, dashSize:0.12, gapSize:0.08 });
+  else mat = new THREE.LineBasicMaterial({ color, transparent:true, opacity });
+  const ln = new THREE.Line(g, mat);
+  if (dashed) ln.computeLineDistances();
+  return ln;
+}
+/* 軌道面（半透明扇形網格） */
+function planeMesh(orb, color){
+  const n = 140, p = orb.a*(1-orb.e*orb.e);
+  const cx = -orb.a*orb.e*Math.cos(orb.om), cy = -orb.a*orb.e*Math.sin(orb.om); // 橢圓中心（面內）
+  const verts = [];
+  const cw = orb.toWorld(cx, cy);
+  let prev = null;
+  for (let i=0;i<=n;i++){
+    const nu = TAU*i/n, r = p/(1+orb.e*Math.cos(nu)), th = orb.om+nu;
+    const w = orb.toWorld(r*Math.cos(th), r*Math.sin(th));
+    if (prev){ verts.push(...cw, ...prev, ...w); }
+    prev = w;
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute("position", new THREE.BufferAttribute(new Float32Array(verts),3));
+  g.computeVertexNormals();
+  return new THREE.Mesh(g, new THREE.MeshBasicMaterial({ color, transparent:true, opacity:0.055, side:THREE.DoubleSide, depthWrite:false }));
+}
+
+const C_P1 = 0xf5a83c, C_P2 = 0x62d8ff, C_MISS = 0x7df0a8, C_PLAN = 0x9aa7c2;
+scene.add(lineOf(orbitPoints(M.planet1, 0, TAU, 240), C_P1, 0.9, false));
+scene.add(lineOf(orbitPoints(M.planet2, 0, TAU, 240), C_P2, 0.9, false));
+scene.add(planeMesh(M.planet1, C_P1));
+scene.add(planeMesh(M.planet2, C_P2));
+
+/* 交點線（Y 軸） */
+const nodeLine = lineOf([V([0,-4.7,0]), V([0,4.7,0])], 0xc7d2ea, 0.55, true);
+scene.add(nodeLine);
+const nodeLabel = makeLabel("軌道面交點線", "#c7d2ea", 1.25);
+nodeLabel.position.set(0, 4.85, 0.1); scene.add(nodeLabel);
+
+/* PE / AP 標記 */
+function apsisMarker(orb, nu, text, color){
+  const p = orb.a*(1-orb.e*orb.e), r = p/(1+orb.e*Math.cos(nu)), th = orb.om+nu;
+  const w = orb.toWorld(r*Math.cos(th), r*Math.sin(th));
+  const m = new THREE.Mesh(new THREE.SphereGeometry(0.035, 10, 10), new THREE.MeshBasicMaterial({ color }));
+  m.position.set(w[0],w[1],w[2]); scene.add(m);
+  const lb = makeLabel(text, "#"+new THREE.Color(color).getHexString(), 0.78);
+  lb.position.set(w[0], w[1], w[2]+0.26); scene.add(lb);
+}
+apsisMarker(M.planet1, 0,       "行星一 PE", C_P1);
+apsisMarker(M.planet1, Math.PI, "行星一 AP", C_P1);
+apsisMarker(M.planet2, 0,       "行星二 PE", C_P2);
+apsisMarker(M.planet2, Math.PI, "行星二 AP", C_P2);
+
+/* 行星 */
+function planetMesh(rad, color, name){
+  const grp = new THREE.Group();
+  grp.add(new THREE.Mesh(new THREE.SphereGeometry(rad, 22, 22), new THREE.MeshBasicMaterial({ color })));
+  const gl = new THREE.Sprite(new THREE.SpriteMaterial({ map:glowTexture("rgba(255,255,255,0.35)","rgba(255,255,255,0)"), transparent:true, depthWrite:false, color }));
+  gl.scale.set(rad*5, rad*5, 1); grp.add(gl);
+  const lb = makeLabel(name, "#"+new THREE.Color(color).getHexString(), 0.95);
+  lb.position.set(0,0,rad+0.22); grp.add(lb);
+  scene.add(grp);
+  return grp;
+}
+const p1Mesh = planetMesh(0.0425, C_P1, "行星一");
+const p2Mesh = planetMesh(0.0575, C_P2, "行星二");
+
+/* 規劃軌跡（依階段顯示） */
+const segCurves = {
+  park1a_d: lineOf(orbitPoints(M.park1a, 0, TAU, 180), C_PLAN, 0.55, true),
+  park1a_s: lineOf(orbitPoints(M.park1a, 0, TAU, 180), C_PLAN, 0.40, false),
+  park1b_d: lineOf(orbitPoints(M.park1b, 0, TAU, 180), C_PLAN, 0.55, true),
+  park1b_s: lineOf(orbitPoints(M.park1b, 0, TAU, 180), C_PLAN, 0.40, false),
+  trans1_d: lineOf(orbitPoints(M.trans1, 0, Math.PI, 140), C_MISS, 0.85, true),
+  trans1_s: lineOf(orbitPoints(M.trans1, 0, Math.PI, 140), C_MISS, 0.95, false),
+  park2a_d: lineOf(orbitPoints(M.park2a, 0, TAU, 180), C_PLAN, 0.55, true),
+  park2a_s: lineOf(orbitPoints(M.park2a, 0, TAU, 180), C_PLAN, 0.40, false),
+  park2b_d: lineOf(orbitPoints(M.park2b, 0, TAU, 180), C_PLAN, 0.55, true),
+  park2b_s: lineOf(orbitPoints(M.park2b, 0, TAU, 180), C_PLAN, 0.40, false),
+  trans2_d: lineOf(orbitPoints(M.trans2, -Math.PI, 0, 140), C_MISS, 0.85, true),
+  trans2_s: lineOf(orbitPoints(M.trans2, -Math.PI, 0, 140), C_MISS, 0.95, false),
+};
+Object.values(segCurves).forEach(c => { c.visible = false; scene.add(c); });
+const SHOW = {
+  wait1:["park1a_d"], esc1:["park1a_d"], burn0:["park1a_s"],
+  coastN1:["park1a_s","park1b_d"], burn1:["park1b_s"],
+  coastW1:["park1b_s","trans1_d"], burn2:["park1b_s","trans1_s"],
+  trans1:["trans1_s"], burn3:["trans1_s"],
+  stay2:["park2a_d"], esc2:["park2a_d"], burn4:["park2a_s"],
+  coastN2:["park2a_s","park2b_d"], burn5:["park2b_s"],
+  coastW2:["park2b_s","trans2_d"], burn6:["park2b_s","trans2_s"],
+  trans2:["trans2_s"], burn7:["trans2_s"], done:[]
+};
+
+/* 交會點標記 */
+function rendezvousMarker(){
+  const grp = new THREE.Group();
+  const ring = new THREE.Mesh(new THREE.RingGeometry(0.07, 0.10, 28), new THREE.MeshBasicMaterial({ color:C_MISS, side:THREE.DoubleSide, transparent:true, opacity:0.95 }));
+  grp.add(ring);
+  const lb = makeLabel("預定交會點", "#7df0a8", 0.95);
+  lb.position.set(0,0,0.3); grp.add(lb);
+  grp.visible = false; scene.add(grp);
+  return grp;
+}
+const mk1 = rendezvousMarker(), mk2 = rendezvousMarker();
+{
+  const w1 = M.trans1.pos(M.inj1.tArr); mk1.position.set(w1[0],w1[1],w1[2]);
+  const w2 = M.trans2.pos(M.inj2.tArr); mk2.position.set(w2[0],w2[1],w2[2]);
+}
+const MARKS = { coastW1:mk1, burn2:mk1, trans1:mk1, coastW2:mk2, burn6:mk2, trans2:mk2 };
+
+/* 太空船 */
+const ship = new THREE.Group();
+const shipBody = new THREE.Mesh(new THREE.ConeGeometry(0.028, 0.10, 10), new THREE.MeshBasicMaterial({ color:0xffffff }));
+shipBody.rotation.x = Math.PI/2; // 使錐尖朝 +Z（局部），用 lookAt 對準速度向
+ship.add(shipBody);
+const shipGlow = new THREE.Sprite(new THREE.SpriteMaterial({ map:glowTexture("rgba(255,255,255,0.8)","rgba(255,255,255,0)"), transparent:true, depthWrite:false }));
+shipGlow.scale.set(0.16,0.16,1); ship.add(shipGlow);
+const flame = new THREE.Mesh(new THREE.ConeGeometry(0.022, 0.16, 10), new THREE.MeshBasicMaterial({ color:0xff8a3d, transparent:true, opacity:0.95 }));
+flame.rotation.x = -Math.PI/2; flame.position.z = -0.12; flame.visible = false; ship.add(flame);
+const flameGlow = new THREE.Sprite(new THREE.SpriteMaterial({ map:glowTexture("rgba(255,150,60,0.9)","rgba(255,120,40,0)"), transparent:true, depthWrite:false }));
+flameGlow.scale.set(0.3,0.3,1); flameGlow.position.z = -0.14; flameGlow.visible = false; ship.add(flameGlow);
+scene.add(ship);
+const shipLabel = makeLabel("太空船", "#ffffff", 0.7);
+scene.add(shipLabel);
+
+/* 軌跡尾流 */
+const TRAIL_N = 900;
+const trailPos = new Float32Array(TRAIL_N*3);
+const trailGeo = new THREE.BufferGeometry();
+trailGeo.setAttribute("position", new THREE.BufferAttribute(trailPos, 3));
+trailGeo.setDrawRange(0,0);
+const trail = new THREE.Line(trailGeo, new THREE.LineBasicMaterial({ color:0xffffff, transparent:true, opacity:0.55 }));
+scene.add(trail);
+let trailLen = 0, trailLast = null;
+function trailReset(){ trailLen = 0; trailLast = null; trailGeo.setDrawRange(0,0); }
+function trailPush(p){
+  if (trailLast && Math.hypot(p[0]-trailLast[0], p[1]-trailLast[1], p[2]-trailLast[2]) < 0.012) return;
+  if (trailLen >= TRAIL_N){ trailPos.copyWithin(0, 3); trailLen = TRAIL_N - 1; }
+  trailPos[trailLen*3] = p[0]; trailPos[trailLen*3+1] = p[1]; trailPos[trailLen*3+2] = p[2];
+  trailLen++; trailLast = p;
+  trailGeo.setDrawRange(0, trailLen);
+  trailGeo.attributes.position.needsUpdate = true;
+}
+
+/* =====================================================================
+   PART E — 相機（自製軌道控制）／UI／主迴圈
+   ===================================================================== */
+const cam = { yaw:-0.9, pitch:0.62, dist:7.6, distGoal:7.6, target:new THREE.Vector3(), mode:"sun" };
+let camAuto = true;
+function focusPos(name, t){
+  if (name === "ship") return shipPos(t);
+  if (name === "p1") return M.planet1.pos(t);
+  if (name === "p2") return M.planet2.pos(t);
+  return [0,0,0];
+}
+(function pointer(){
+  const el = canvas; const pts = new Map(); let pinch0 = 0, dist0 = 0;
+  el.addEventListener("pointerdown", e => { pts.set(e.pointerId, [e.clientX, e.clientY]); el.setPointerCapture(e.pointerId); });
+  el.addEventListener("pointermove", e => {
+    if (!pts.has(e.pointerId)) return;
+    const prev = pts.get(e.pointerId); pts.set(e.pointerId, [e.clientX, e.clientY]);
+    if (pts.size === 1){
+      cam.yaw   -= (e.clientX - prev[0]) * 0.005;
+      cam.pitch  = Math.min(1.52, Math.max(0.03, cam.pitch + (e.clientY - prev[1]) * 0.005));
+      setAutoCam(false);
+    } else if (pts.size === 2){
+      const arr = [...pts.values()];
+      const d = Math.hypot(arr[0][0]-arr[1][0], arr[0][1]-arr[1][1]);
+      if (pinch0 === 0){ pinch0 = d; dist0 = cam.distGoal; }
+      cam.distGoal = Math.min(20, Math.max(0.35, dist0 * pinch0 / d));
+      setAutoCam(false);
+    }
+  });
+  const up = e => { pts.delete(e.pointerId); pinch0 = 0; };
+  el.addEventListener("pointerup", up); el.addEventListener("pointercancel", up);
+  el.addEventListener("wheel", e => {
+    e.preventDefault();
+    cam.distGoal = Math.min(20, Math.max(0.35, cam.distGoal * Math.exp(e.deltaY * 0.0011)));
+    setAutoCam(false);
+  }, { passive:false });
+})();
+
+/* UI 取得 */
+const $ = id => document.getElementById(id);
+const elT=$("hud-t"), elR=$("hud-r"), elV=$("hud-v"), elDV=$("hud-dv");
+const elKick=$("ph-kicker"), elTitle=$("ph-title"), elDesc=$("ph-desc"), elProg=$("ph-prog").firstElementChild, elSub=$("subcard");
+const warpSlider=$("warpslider"), warpAuto=$("warpauto"), warpRead=$("warpread"), camAutoChk=$("camauto");
+
+let simT = 0, playing = true, lastPhaseId = null, lastYear = 1;
+const calIcon = $("calicon"), yearNumB = document.querySelector("#yearnum b"), yearBarFill = document.querySelector("#yearbar i");
+const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
+if (reduced) playing = false;
+
+function setAutoCam(v){ camAuto = v; camAutoChk.checked = v; }
+camAutoChk.addEventListener("change", () => camAuto = camAutoChk.checked);
+warpAuto.addEventListener("change", () => {});
+warpSlider.addEventListener("input", () => { warpAuto.checked = false; });
+
+$("b-play").addEventListener("click", () => {
+  playing = !playing;
+  $("b-play").textContent = playing ? "⏸ 暫停" : "▶ 播放";
+});
+$("b-replay").addEventListener("click", () => jumpTo(0));
+$("b-prev").addEventListener("click", () => {
+  const i = PH.indexOf(phaseAt(simT));
+  jumpTo(PH[Math.max(0, i-1)].t0 + 1e-4);
+});
+$("b-next").addEventListener("click", () => {
+  const i = PH.indexOf(phaseAt(simT));
+  jumpTo(PH[Math.min(PH.length-1, i+1)].t0 + 1e-4);
+});
+$("b-notes").addEventListener("click", () => $("notes").classList.add("open"));
+$("b-notes-close").addEventListener("click", () => $("notes").classList.remove("open"));
+$("notes").addEventListener("click", e => { if (e.target.id === "notes") $("notes").classList.remove("open"); });
+$("b-sub").addEventListener("click", () => {
+  const hidden = document.body.classList.toggle("subhide");
+  $("b-sub").classList.toggle("on", !hidden);
+});
+
+const viewBtns = { "v-top":[1.46, 9.5], "v-iso":[0.62, 7.6], "v-ship":null };
+for (const id of Object.keys(viewBtns)){
+  $(id).addEventListener("click", () => {
+    document.querySelectorAll("#controls .btnrow:nth-child(2) button").forEach(b => b.classList.remove("on"));
+    $(id).classList.add("on");
+    if (id === "v-ship"){ cam.mode = "ship"; cam.distGoal = 1.6; cam.pitch = 0.5; setAutoCam(false); }
+    else { cam.mode = "sun"; cam.pitch = viewBtns[id][0]; cam.distGoal = viewBtns[id][1]; }
+  });
+}
+
+/* 任務序列軌 */
+const railWrap = $("railin");
+const railStops = [];
+PH.forEach((p, i) => {
+  if (!p.rail) return;
+  const b = document.createElement("button");
+  b.className = "stop" + (p.kind === "burn" ? " burnstop" : "");
+  b.setAttribute("role","tab");
+  b.innerHTML = `<span class="dot"></span><span class="lab"></span>`;
+  b.querySelector(".lab").textContent = p.rail;
+  b.addEventListener("click", () => jumpTo(p.t0 + 1e-4));
+  railWrap.appendChild(b);
+  railStops.push({ el:b, idx:i });
+});
+
+function jumpTo(t){
+  simT = Math.min(tEnd - 1e-3, Math.max(0, t));
+  trailReset();
+  lastPhaseId = null;
+  if (!playing){ playing = true; $("b-play").textContent = "⏸ 暫停"; }
+}
+
+/* 倍率：slider 為 log10(年/秒)；自動模式下非燃燒階段以「約 10 秒看完一階段」自適應 */
+function desiredWarp(p){
+  if (warpAuto.checked){
+    if (p.kind === "burn") return p.warp;
+    const w = (p.t1 - p.t0) / 10;
+    return Math.min(5, Math.max(0.005, w));
+  }
+  return Math.pow(10, parseFloat(warpSlider.value));
+}
+
+function fmtWarp(w){
+  const dPerSec = w * 365.25;
+  if (dPerSec >= 200) return `1秒 ≈ ${(w).toFixed(2)} 年`;
+  if (dPerSec >= 1) return `1秒 ≈ ${dPerSec.toFixed(0)} 天`;
+  return `1秒 ≈ ${(dPerSec*24).toFixed(1)} 小時`;
+}
+
+/* 燃燒火焰方向＝ΔV 方向；平時機首對準速度方向 */
+function shipAim(t, p){
+  let dir;
+  if (p.kind === "burn"){
+    const tB = M.burns[p.burn].t;
+    const vb = ridePos(p.before, tB+1e-6), vb0 = ridePos(p.before, tB-1e-6);
+    const va = ridePos(p.after,  tB+1e-6), va0 = ridePos(p.after,  tB-1e-6);
+    const vBef = vsub(vb, vb0), vAft = vsub(va, va0);
+    dir = vsub(vAft, vBef);
+  } else {
+    const h = 2e-4;
+    dir = vsub(shipPos(t+h), shipPos(t-h));
+  }
+  const L = vlen(dir) || 1;
+  return [dir[0]/L, dir[1]/L, dir[2]/L];
+}
+
+let cumDVShown = 0;
+function cumDV(t){ return M.burns.reduce((s,b) => s + (t >= b.t ? b.dv : 0), 0); }
+
+let lastReal = performance.now();
+function frame(now){
+  requestAnimationFrame(frame);
+  const dt = Math.min(0.05, (now - lastReal)/1000); lastReal = now;
+
+  const p = phaseAt(simT);
+  const w = desiredWarp(p);
+  if (playing){
+    simT += w * dt;
+    if (simT >= tEnd - 1e-3){ simT = tEnd - 1e-3; playing = false; $("b-play").textContent = "▶ 播放"; }
+  }
+  const pNow = phaseAt(simT);
+
+  /* 階段切換 */
+  if (pNow.id !== lastPhaseId){
+    lastPhaseId = pNow.id;
+    elTitle.textContent = pNow.title;
+    elDesc.innerHTML = pNow.desc;
+    elKick.textContent = (pNow.kind === "burn") ? "ENGINE BURN ▮▮" : "MISSION PHASE";
+    elSub.parentElement.classList.toggle("burning", pNow.kind === "burn");
+    Object.values(segCurves).forEach(c => c.visible = false);
+    (SHOW[pNow.id] || []).forEach(k => segCurves[k].visible = true);
+    mk1.visible = MARKS[pNow.id] === mk1;
+    mk2.visible = MARKS[pNow.id] === mk2;
+    const pi = PH.indexOf(pNow);
+    // cur = 最後一個 idx<=pi 的 rail 節點；past = 在其之前
+    let curIdx = -1;
+    railStops.forEach(s => { if (s.idx <= pi) curIdx = Math.max(curIdx, s.idx); });
+    railStops.forEach(s => {
+      s.el.classList.toggle("cur", s.idx === curIdx);
+      s.el.classList.toggle("past", s.idx < curIdx);
+    });
+  }
+  elProg.style.width = (100 * Math.min(1, (simT - pNow.t0) / Math.max(1e-6, pNow.t1 - pNow.t0))) + "%";
+
+  /* 天體與太空船 */
+  const w1 = M.planet1.pos(simT), w2 = M.planet2.pos(simT);
+  p1Mesh.position.set(w1[0], w1[1], w1[2]);
+  p2Mesh.position.set(w2[0], w2[1], w2[2]);
+  const sp = shipPos(simT);
+  ship.position.set(sp[0], sp[1], sp[2]);
+  const aim = shipAim(simT, pNow);
+  ship.lookAt(sp[0]+aim[0], sp[1]+aim[1], sp[2]+aim[2]);
+  shipLabel.position.set(sp[0], sp[1], sp[2]+0.2);
+  const burning = pNow.kind === "burn";
+  flame.visible = burning; flameGlow.visible = burning;
+  if (burning){ const s = 0.85 + 0.3*Math.sin(now*0.03); flame.scale.set(s,1,s); }
+  if (playing) trailPush(sp);
+
+  /* HUD */
+  elT.textContent = `T+${simT.toFixed(2)} 年`;
+  elR.textContent = `${vlen(sp).toFixed(2)} AU`;
+  elV.textContent = `${shipVelKms(simT).toFixed(1)} km/s`;
+  const cd = cumDV(simT);
+  if (cd !== cumDVShown){ cumDVShown = cd; }
+  elDV.textContent = `${cd.toFixed(1)} km/s`;
+  warpRead.textContent = fmtWarp(w);
+  if (!warpAuto.checked) warpRead.textContent = fmtWarp(Math.pow(10, parseFloat(warpSlider.value)));
+
+  /* 年曆：換年時翻頁動畫，凸顯任務時間的漫長 */
+  const yr = Math.floor(simT) + 1;
+  if (yr !== lastYear){
+    lastYear = yr;
+    yearNumB.textContent = yr;
+    calIcon.classList.remove("tick");
+    void calIcon.offsetWidth; // 重新觸發動畫
+    calIcon.classList.add("tick");
+  }
+  yearBarFill.style.width = ((simT % 1) * 100).toFixed(1) + "%";
+
+  /* 相機 */
+  let focus = cam.mode === "ship" ? "ship" : "sun";
+  let dGoal = cam.distGoal;
+  if (camAuto && cam.mode !== "ship"){
+    if (pNow.focus === "p1" || pNow.focus === "p2"){ focus = pNow.focus; dGoal = 1.5; }
+    else if (pNow.focus === "ship" && pNow.kind === "burn"){ focus = "ship"; dGoal = 2.0; }
+    else { focus = "sun"; dGoal = cam.distGoal; }
+  }
+  const fp = focusPos(focus, simT);
+  cam.target.lerp(new THREE.Vector3(fp[0], fp[1], fp[2]), 0.07);
+  cam.dist += ((camAuto && focus!=="sun" ? dGoal : cam.distGoal) - cam.dist) * 0.06;
+  const cp = Math.cos(cam.pitch), spc = Math.sin(cam.pitch);
+  camera.position.set(
+    cam.target.x + cam.dist*cp*Math.cos(cam.yaw),
+    cam.target.y + cam.dist*cp*Math.sin(cam.yaw),
+    cam.target.z + cam.dist*spc
+  );
+  camera.lookAt(cam.target);
+
+  renderer.render(scene, camera);
+}
+
+function resize(){
+  const w = innerWidth, h = innerHeight;
+  renderer.setSize(w, h, false);
+  camera.aspect = w/h;
+  camera.updateProjectionMatrix();
+}
+addEventListener("resize", resize);
+resize();
+if (reduced){ elTitle.textContent = "已依系統「減少動態」設定暫停，按 ▶ 播放開始"; $("b-play").textContent = "▶ 播放"; }
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
