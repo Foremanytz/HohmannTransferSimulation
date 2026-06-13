@@ -2,7 +2,7 @@
 <html lang="zh-Hant">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>霍曼轉移任務模擬｜Hohmann Transfer</title>
 <style>
   :root{
@@ -13,8 +13,8 @@
     --sans:"Noto Sans TC","PingFang TC","Microsoft JhengHei",system-ui,sans-serif;
   }
   *{box-sizing:border-box;margin:0;padding:0}
-  html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--ink);font-family:var(--sans)}
-  #scene{position:fixed;inset:0;display:block;touch-action:none}
+  html,body{height:var(--app-h,100%);overflow:hidden;background:var(--bg);color:var(--ink);font-family:var(--sans)}
+  #scene{position:fixed;top:0;left:0;width:100%;height:var(--app-h,100%);display:block;touch-action:none}
   .hud{position:fixed;z-index:5;pointer-events:none}
   .hud .card{pointer-events:auto}
 
@@ -937,12 +937,20 @@ function frame(now){
 }
 
 function resize(){
-  const w = innerWidth, h = innerHeight;
+  const vv = window.visualViewport;
+  const w = vv ? Math.round(vv.width)  : innerWidth;
+  const h = vv ? Math.round(vv.height) : innerHeight;
+  document.documentElement.style.setProperty("--app-h", h + "px");
   renderer.setSize(w, h, false);
   camera.aspect = w/h;
   camera.updateProjectionMatrix();
 }
 addEventListener("resize", resize);
+if (window.visualViewport){
+  visualViewport.addEventListener("resize", resize);
+  visualViewport.addEventListener("scroll", resize);
+}
+addEventListener("orientationchange", () => setTimeout(resize, 250));
 resize();
 if (reduced){ elTitle.textContent = "已依系統「減少動態」設定暫停，按 ▶ 播放開始"; $("b-play").textContent = "▶ 播放"; }
 requestAnimationFrame(frame);
